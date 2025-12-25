@@ -634,12 +634,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let area = centered_rect(70, 30, f.size());
                         f.render_widget(Clear, area);
                         
+                        // Add blinking cursor
+                        let cursor = if (std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis() / 500) % 2 == 0 {
+                            "█"
+                        } else {
+                            " "
+                        };
+                        
                         let save_text = format!(
                             "Save Playlist\n\n\
-                            Path:\n{}\n\n\
+                            Path:\n{}{}\n\n\
                             Press Enter to save, ESC to cancel\n\
                             Use Backspace to edit path",
-                            app.save_path_input
+                            app.save_path_input, cursor
                         );
                         
                         let save_dialog = Paragraph::new(save_text)
@@ -651,7 +661,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Modal::None => {}
                 }
             })?;
-            needs_redraw = false;
+            // Keep redrawing if SavePlaylist modal is open (for blinking cursor)
+            needs_redraw = matches!(app.modal, Modal::SavePlaylist);
         }
 
         if event::poll(std::time::Duration::from_millis(250))? {
