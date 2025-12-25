@@ -7,6 +7,7 @@ use audio::AudioEngine;
 use playlist::{Playlist, RepeatMode};
 use browser::FileBrowser;
 use config::Config;
+use lofty::{probe::Probe, prelude::Accessor, file::TaggedFileExt};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Alignment, Rect},
@@ -46,6 +47,7 @@ struct App {
     status: String,
     is_playing: bool,
     show_browser: bool,
+    show_info: bool,
     playlist_state: ListState,
     browser_state: ListState,
     history_state: ListState,
@@ -71,6 +73,7 @@ impl App {
             status: "Ready".to_string(),
             is_playing: false,
             show_browser: false,
+            show_info: false,
             playlist_state: ListState::default(),
             browser_state: ListState::default(),
             history_state: ListState::default(),
@@ -120,10 +123,52 @@ impl App {
         path.split('/').last().unwrap_or(path)
     }
 
+    fn get_metadata(path: &str) -> (String, String, String, String) {
+        if let Ok(tagged_file) = Probe::open(path).and_then(|p| p.read()) {
+            let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
+            if let Some(tag) = tag {
+                let artist = tag.artist().as_deref().unwrap_or("Unknown Artist").to_string();
+                let album = tag.album().as_deref().unwrap_or("Unknown Album").to_string();
+                let title = tag.title().as_deref().unwrap_or(Self::get_filename(path)).to_string();
+                let year = tag.year().map(|y| y.to_string()).unwrap_or_else(|| "Unknown".to_string());
+                return (title, artist, album, year);
+            }
+        }
+        (Self::get_filename(path).to_string(), "Unknown Artist".to_string(), "Unknown Album".to_string(), "Unknown".to_string())
+    }
+
     fn format_duration(secs: u64) -> String {
         let mins = secs / 60;
         let secs = secs % 60;
         format!("{:02}:{:02}", mins, secs)
+    }
+
+    fn save_playlist_m3u(&self, path: &str) -> Result<(), String> {
+        let tracks = self.playlist.tracks();
+        if tracks.is_empty() {
+            return Err("Playlist is empty".to_string());
+        }
+        
+        let mut content = String::from("#EXTM3U\n");
+        for track in tracks {
+            content.push_str(track);
+            content.push('\n');
+        }
+        
+        std::fs::write(path, content).map_err(|e| format!("Failed to save: {}", e))
+    }
+
+    fn get_default_playlist_path(&self) -> String {
+        let base_dir = self.config.default_playlist_dir.clone()
+            .or_else(|| dirs::home_dir().map(|p| p.join("Music").to_string_lossy().to_string()))
+            .unwrap_or_else(|| ".".to_string());
+        
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        format!("{}/playlist_{}.m3u", base_dir, timestamp)
     }
 }
 
@@ -397,20 +442,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .highlight_style(Style::default().bg(Color::DarkGray));
                 f.render_stateful_widget(history_list, right_chunks[0], &mut app.history_state);
 
-                // Keybinds box
-                let keybinds_text = 
-                    "Space   Play/Pause\n\
-                     , .     Prev/Next\n\
-                     ← →     Seek ±5s\n\
-                     + -     Volume\n\
-                     M       Mute\n\
-                     S       Shuffle\n\
-                     R       Repeat";
-                
-                let keybinds = Paragraph::new(keybinds_text)
-                    .style(Style::default().fg(Color::Gray))
-                    .block(Block::default().borders(Borders::ALL).title("Controls"));
-                f.render_widget(keybinds, right_chunks[1]);
+                // Keybinds or Info box
+                let info_widget = if app.show_info {
+                    // Show track info
+                    let info_text = if let Some(track_path) = app.playlist.current() {
+                        let (title, artist, album, year) = App::get_metadata(track_path);
+                        format!("Title:  {}\nArtist: {}\nAlbum:  {}\nYear:   {}", title, artist, album, year)
+                    } else {
+                        "No track playing".to_string()
+                    };
+                    
+                    Paragraph::new(info_text)
+                        .style(Style::default().fg(Color::Cyan))
+                        .block(Block::default().borders(Borders::ALL).title("Track Info [I: Toggle]"))
+                } else {
+                    // Show keybinds
+                    let keybinds_text = 
+                        "Space   Play/Pause\n\
+                         , .     Prev/Next\n\
+                         ← →     Seek ±5s\n\
+                         + -     Volume\n\
+                         M       Mute\n\
+                         S       Shuffle\n\
+                         R       Repeat";
+                    
+                    Paragraph::new(keybinds_text)
+                        .style(Style::default().fg(Color::Gray))
+                        .block(Block::default().borders(Borders::ALL).title("Controls [I: Info]"))
+                };
+                f.render_widget(info_widget, right_chunks[1]);
 
                 // Player at bottom (full width)
                 let current_track = app.playlist.current()
@@ -445,9 +505,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Control buttons with state
                 let play_btn = if app.is_playing && !app.audio.is_paused() {
-                    "▮▮"
+                    "▶"  // Show playing status
                 } else {
-                    "▶"
+                    "⏸"  // Show paused status
                 };
                 
                 let shuffle_text = "Shuffle";
@@ -504,19 +564,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "Global Controls:",
                             "  Space     - Play/Pause",
                             "  , / .     - Previous/Next track",
+                            "  ← / →     - Seek ±5 seconds",
                             "  + / -     - Volume up/down",
+                            "  M         - Mute/Unmute",
                             "  Tab       - Toggle file browser",
+                            "  H         - Toggle history",
+                            "  I         - Toggle track info",
                             "  F1        - Show this help",
                             "  F2        - Settings",
                             "  Q         - Quit",
                             "",
-                            "Playlist (when browser hidden):",
+                            "Playlist:",
                             "  ↑ / ↓     - Navigate playlist",
                             "  Enter     - Play selected track",
                             "  Delete    - Remove selected track",
                             "  C         - Clear entire playlist",
                             "  S         - Toggle shuffle",
                             "  R         - Cycle repeat mode",
+                            "  P         - Save playlist as M3U",
                             "",
                             "File Browser (when visible):",
                             "  ↑ / ↓     - Navigate files",
@@ -538,19 +603,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         f.render_widget(Clear, area);
                         
                         let default_dir = app.config.default_music_dir.as_deref().unwrap_or("Not set");
+                        let playlist_dir = app.config.default_playlist_dir.as_deref().unwrap_or("~/Music (default)");
                         let last_dir = app.config.last_directory.as_deref().unwrap_or("Not set");
-                        let last_playlist = app.config.last_playlist.as_deref().unwrap_or("Not set");
                         
                         let settings_text = format!(
                             "RustPlayer - Settings\n\n\
                             Default Music Directory:\n  {}\n\n\
+                            Default Playlist Save Directory:\n  {}\n\n\
                             Last Directory:\n  {}\n\n\
-                            Last Playlist:\n  {}\n\n\
                             Note: Settings are automatically saved.\n\
                             To set default music dir, navigate to it\n\
                             in the browser and press Ctrl+D.\n\n\
                             Press ESC or F2 to close",
-                            default_dir, last_dir, last_playlist
+                            default_dir, playlist_dir, last_dir
                         );
                         
                         let settings = Paragraph::new(settings_text)
@@ -607,6 +672,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             FocusPane::History => FocusPane::Playlist,
                             _ => FocusPane::History,
                         };
+                    }
+                    KeyCode::Char('i') | KeyCode::Char('I') => {
+                        // Toggle info view
+                        app.show_info = !app.show_info;
                     }
                     KeyCode::Tab => {
                         // Tab toggles browser and switches focus
@@ -689,6 +758,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     KeyCode::Char('r') | KeyCode::Char('R') => {
                         app.playlist.cycle_repeat();
+                    }
+                    KeyCode::Char('p') | KeyCode::Char('P') => {
+                        // Save playlist to default location
+                        let path = app.get_default_playlist_path();
+                        match app.save_playlist_m3u(&path) {
+                            Ok(_) => app.status = format!("Playlist saved: {}", path),
+                            Err(e) => app.status = format!("Error: {}", e),
+                        }
                     }
                     _ => {
                         // Context-specific keys based on focus

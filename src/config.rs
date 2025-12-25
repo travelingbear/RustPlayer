@@ -7,6 +7,7 @@ pub struct Config {
     pub last_directory: Option<String>,
     pub last_playlist: Option<String>,
     pub default_music_dir: Option<String>,
+    pub default_playlist_dir: Option<String>,
     pub current_playlist_tracks: Vec<String>,
 }
 
