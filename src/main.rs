@@ -358,7 +358,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .split(top_layout[0]);
 
                 // Menu bar
-                let menu = Paragraph::new("RustPlayer | Tab: Browser | F1: Help | F2: Settings | Q: Quit")
+                let menu = Paragraph::new("RAP - Rust Audio Player | Tab: Browser | F1: Help | F2: Settings | Q: Quit")
                     .style(Style::default().fg(Color::Cyan))
                     .alignment(Alignment::Center)
                     .block(Block::default().borders(Borders::ALL));
@@ -566,7 +566,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let area = centered_rect(60, 70, f.size());
                         f.render_widget(Clear, area);
                         let help_text = vec![
-                            "RustPlayer - Help",
+                            "RAP - Rust Audio Player - Help",
                             "",
                             "Global Controls:",
                             "  Space     - Play/Pause",
@@ -615,7 +615,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let last_dir = app.config.last_directory.as_deref().unwrap_or("Not set");
                         
                         let settings_text = format!(
-                            "RustPlayer - Settings\n\n\
+                            "RAP - Rust Audio Player - Settings\n\n\
                             Default Music Directory:\n  {}\n\n\
                             Default Playlist Save Directory:\n  {}\n\n\
                             Last Directory:\n  {}\n\n\

@@ -1,4 +1,4 @@
-# RustPlayer
+# RAP - Rust Audio Player
 
 A lightweight, terminal-based music player written in Rust with minimal resource usage.
 
@@ -20,7 +20,7 @@ Requires Rust 1.70 or later.
 
 ```bash
 git clone <your-repo-url>
-cd RustPlayer
+cd RAP
 cargo build --release
 ./target/release/rustplayer
 ```
@@ -58,7 +58,7 @@ Download the latest release for your platform from the [Releases](../../releases
 
 ## Performance
 
-RustPlayer is designed to be extremely resource-efficient:
+RAP is designed to be extremely resource-efficient:
 - **Memory**: ~11.6 MB
 - **CPU**: ~4% during playback
 - No memory leaks during extended playback sessions
