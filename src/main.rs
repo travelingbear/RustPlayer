@@ -59,6 +59,7 @@ struct App {
     last_prev_press: Option<std::time::Instant>,
     current_track_start: Option<std::time::Instant>,
     current_track_path: Option<String>,
+    help_scroll: u16,
 }
 
 impl App {
@@ -85,6 +86,7 @@ impl App {
             last_prev_press: None,
             current_track_start: None,
             current_track_path: None,
+            help_scroll: 0,
         })
     }
 
@@ -581,7 +583,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "  C         - Clear entire playlist",
                             "  S         - Toggle shuffle",
                             "  R         - Cycle repeat mode",
-                            "  P         - Save playlist as M3U",
+                            "  Ctrl+S    - Save playlist as M3U",
                             "",
                             "File Browser (when visible):",
                             "  ↑ / ↓     - Navigate files",
@@ -593,8 +595,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "Press ESC or F1 to close",
                         ];
                         let help = Paragraph::new(help_text.join("\n"))
-                            .block(Block::default().borders(Borders::ALL).title("Help"))
+                            .block(Block::default().borders(Borders::ALL).title("Help [↑/↓ to scroll]"))
                             .style(Style::default().bg(Color::Black))
+                            .scroll((app.help_scroll, 0))
                             .wrap(Wrap { trim: false });
                         f.render_widget(help, area);
                     }
@@ -640,9 +643,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match key.code {
                             KeyCode::Esc | KeyCode::F(1) if matches!(app.modal, Modal::Help) => {
                                 app.modal = Modal::None;
+                                app.help_scroll = 0;
                             }
                             KeyCode::Esc | KeyCode::F(2) if matches!(app.modal, Modal::Settings) => {
                                 app.modal = Modal::None;
+                            }
+                            KeyCode::Up if matches!(app.modal, Modal::Help) => {
+                                app.help_scroll = app.help_scroll.saturating_sub(1);
+                            }
+                            KeyCode::Down if matches!(app.modal, Modal::Help) => {
+                                app.help_scroll = app.help_scroll.saturating_add(1);
                             }
                             _ => {}
                         }
@@ -753,19 +763,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             app.audio.set_volume(0.0);
                         }
                     }
-                    KeyCode::Char('s') | KeyCode::Char('S') => {
-                        app.playlist.toggle_shuffle();
-                    }
-                    KeyCode::Char('r') | KeyCode::Char('R') => {
-                        app.playlist.cycle_repeat();
-                    }
-                    KeyCode::Char('p') | KeyCode::Char('P') => {
-                        // Save playlist to default location
+                    KeyCode::Char('s') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                        // Save playlist to default location (Ctrl+S)
                         let path = app.get_default_playlist_path();
                         match app.save_playlist_m3u(&path) {
                             Ok(_) => app.status = format!("Playlist saved: {}", path),
                             Err(e) => app.status = format!("Error: {}", e),
                         }
+                    }
+                    KeyCode::Char('s') | KeyCode::Char('S') => {
+                        app.playlist.toggle_shuffle();
+                    }
+                    KeyCode::Char('r') | KeyCode::Char('R') => {
+                        app.playlist.cycle_repeat();
                     }
                     _ => {
                         // Context-specific keys based on focus
