@@ -162,6 +162,12 @@ impl Playlist {
         }
     }
 
+    pub fn select_index(&mut self, index: usize) {
+        if index < self.tracks.len() {
+            self.selected = index;
+        }
+    }
+
     pub fn clear(&mut self) {
         self.tracks.clear();
         self.current = 0;

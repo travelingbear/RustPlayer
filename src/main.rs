@@ -11,6 +11,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Alignment, Rect},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Gauge, ListState, Clear, Wrap},
     Terminal,
 };
@@ -30,6 +31,12 @@ enum Modal {
     Settings,
 }
 
+enum FocusPane {
+    Playlist,
+    History,
+    Browser,
+}
+
 struct App {
     audio: AudioEngine,
     playlist: Playlist,
@@ -41,7 +48,12 @@ struct App {
     show_browser: bool,
     playlist_state: ListState,
     browser_state: ListState,
+    history_state: ListState,
     modal: Modal,
+    focus: FocusPane,
+    history: Vec<String>,
+    is_muted: bool,
+    volume_before_mute: f32,
 }
 
 impl App {
@@ -58,7 +70,12 @@ impl App {
             show_browser: false,
             playlist_state: ListState::default(),
             browser_state: ListState::default(),
+            history_state: ListState::default(),
             modal: Modal::None,
+            focus: FocusPane::Playlist,
+            history: Vec::new(),
+            is_muted: false,
+            volume_before_mute: 1.0,
         })
     }
 
@@ -69,6 +86,11 @@ impl App {
                 Ok(_) => {
                     self.status = format!("Playing: {}", Self::get_filename(track));
                     self.is_playing = true;
+                    // Add to history
+                    self.history.insert(0, track.to_string());
+                    if self.history.len() > 50 {
+                        self.history.truncate(50);
+                    }
                 }
                 Err(e) => self.status = format!("Error: {}", e),
             }
@@ -230,35 +252,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     app.browser_state.select(Some(app.browser.selected_index()));
                     
                     let file_list = List::new(file_items)
-                        .block(Block::default().borders(Borders::ALL).title("Files [Tab: Hide | Enter: Add | Backspace: Up | A: Add All]"))
+                        .block(Block::default().borders(Borders::ALL).title("Files [Enter: Add | Backspace: Up | A: Add All]"))
                         .highlight_style(Style::default().bg(Color::DarkGray));
                     f.render_stateful_widget(file_list, browser_chunks[1], &mut app.browser_state);
                 }
 
-                // Right side (or full screen if browser hidden)
+                // Right side - split into playlist and player controls
                 let content_area = if app.show_browser { main_chunks[1] } else { main_chunks[0] };
                 
-                let chunks = Layout::default()
+                let main_layout = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Min(5),      // Top area (playlist + history)
+                        Constraint::Length(5),   // Player at bottom (minimal)
+                    ])
+                    .split(content_area);
+
+                // Top area: Playlist and History side by side
+                let top_layout = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(70),  // Playlist
+                        Constraint::Percentage(30),  // History + Controls
+                    ])
+                    .split(main_layout[0]);
+
+                // Left: Playlist with menu
+                let playlist_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(3),  // Menu
                         Constraint::Min(5),     // Playlist
-                        Constraint::Length(3),  // Progress
-                        Constraint::Length(3),  // Status
                     ])
-                    .split(content_area);
+                    .split(top_layout[0]);
 
                 // Menu bar
-                let menu_text = if app.show_browser {
-                    "RustPlayer | Tab: Browser | Space: Play/Pause | ↑/↓: Navigate | F1: Help | Q: Quit"
-                } else {
-                    "RustPlayer | Tab: Browser | Space: Play/Pause | ↑/↓: Select | Enter: Play | F1: Help | Q: Quit"
-                };
-                let menu = Paragraph::new(menu_text)
+                let menu = Paragraph::new("RustPlayer | Tab: Browser | F1: Help | F2: Settings | Q: Quit")
                     .style(Style::default().fg(Color::Cyan))
                     .alignment(Alignment::Center)
                     .block(Block::default().borders(Borders::ALL));
-                f.render_widget(menu, chunks[0]);
+                f.render_widget(menu, playlist_chunks[0]);
 
                 // Playlist
                 let items: Vec<ListItem> = app.playlist.tracks()
@@ -271,7 +304,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if i == app.playlist.current_index() {
                             style = style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
                         }
-                        if !app.show_browser && i == app.playlist.selected_index() {
+                        if matches!(app.focus, FocusPane::Playlist) && i == app.playlist.selected_index() {
                             style = style.bg(Color::DarkGray);
                         }
                         
@@ -280,20 +313,95 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })
                     .collect();
                 
-                if !app.show_browser {
+                if matches!(app.focus, FocusPane::Playlist) {
                     app.playlist_state.select(Some(app.playlist.selected_index()));
                 }
                 
+                let playlist_title = if matches!(app.focus, FocusPane::Playlist) {
+                    "Playlist [Tab: Next]"
+                } else {
+                    "Playlist"
+                };
+                
+                let playlist_style = if matches!(app.focus, FocusPane::Playlist) {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                
                 let list = List::new(items)
-                    .block(Block::default().borders(Borders::ALL).title("Playlist"))
+                    .block(Block::default().borders(Borders::ALL).title(playlist_title).border_style(playlist_style))
                     .highlight_style(Style::default().bg(Color::DarkGray));
-                f.render_stateful_widget(list, chunks[1], &mut app.playlist_state);
+                f.render_stateful_widget(list, playlist_chunks[1], &mut app.playlist_state);
 
-                // Progress bar
+                // Right: History and Controls
+                let right_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Min(5),      // History
+                        Constraint::Length(11),  // Keybinds
+                    ])
+                    .split(top_layout[1]);
+
+                // History
+                let history_items: Vec<ListItem> = app.history
+                    .iter()
+                    .map(|track| {
+                        let filename = App::get_filename(track);
+                        ListItem::new(format!("♪ {}", filename))
+                    })
+                    .collect();
+                
+                if matches!(app.focus, FocusPane::History) && !app.history.is_empty() {
+                    if app.history_state.selected().is_none() {
+                        app.history_state.select(Some(0));
+                    }
+                }
+                
+                let history_title = if matches!(app.focus, FocusPane::History) {
+                    "History [H: Focus | Tab: Next | ↑/↓: Scroll]"
+                } else {
+                    "History [H: Focus]"
+                };
+                
+                let history_style = if matches!(app.focus, FocusPane::History) {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                
+                let history_list = List::new(history_items)
+                    .block(Block::default()
+                        .borders(Borders::ALL)
+                        .title(history_title)
+                        .border_style(history_style))
+                    .highlight_style(Style::default().bg(Color::DarkGray));
+                f.render_stateful_widget(history_list, right_chunks[0], &mut app.history_state);
+
+                // Keybinds box
+                let keybinds_text = 
+                    "Space   Play/Pause\n\
+                     ← →     Prev/Next\n\
+                     , .     Seek ±5s\n\
+                     + -     Volume\n\
+                     M       Mute\n\
+                     S       Shuffle\n\
+                     R       Repeat";
+                
+                let keybinds = Paragraph::new(keybinds_text)
+                    .style(Style::default().fg(Color::Gray))
+                    .block(Block::default().borders(Borders::ALL).title("Controls"));
+                f.render_widget(keybinds, right_chunks[1]);
+
+                // Player at bottom (full width)
+                let current_track = app.playlist.current()
+                    .map(|t| App::get_filename(t))
+                    .unwrap_or("No track");
+                
                 let position = app.audio.get_position();
                 let duration = app.audio.get_duration();
                 
-                let (progress_ratio, progress_label) = if let Some(dur) = duration {
+                let (progress_ratio, time_label) = if let Some(dur) = duration {
                     let pos_secs = position.as_secs();
                     let dur_secs = dur.as_secs();
                     let ratio = if dur_secs > 0 {
@@ -308,37 +416,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (0.0, "-- / --".to_string())
                 };
 
-                let progress = Gauge::default()
-                    .block(Block::default().borders(Borders::ALL).title("Progress"))
-                    .gauge_style(Style::default().fg(Color::Green))
-                    .ratio(progress_ratio)
-                    .label(progress_label);
-                f.render_widget(progress, chunks[2]);
-
-                // Status
-                let play_state = if app.is_playing && !app.audio.is_paused() {
-                    "▶ Playing"
-                } else {
-                    "⏸ Paused"
-                };
-                
-                let shuffle_state = if app.playlist.is_shuffle() { "⤨ Shuffle" } else { "" };
-                let repeat_state = match app.playlist.repeat_mode() {
-                    RepeatMode::Off => "",
-                    RepeatMode::One => "↻ Repeat One",
-                    RepeatMode::All => "⟲ Repeat All",
-                };
-                
-                let status_text = format!("{} | {} | {} | {} | Vol: {}%", 
-                    play_state,
-                    shuffle_state,
-                    repeat_state,
-                    app.status,
-                    (app.volume * 100.0) as u32
+                // Build progress bar
+                let progress_width = main_layout[1].width.saturating_sub(4) as usize;
+                let filled = (progress_width as f64 * progress_ratio) as usize;
+                let progress_bar = format!("{}{}",
+                    "━".repeat(filled),
+                    "─".repeat(progress_width.saturating_sub(filled))
                 );
-                let status = Paragraph::new(status_text)
-                    .block(Block::default().borders(Borders::ALL).title("Status"));
-                f.render_widget(status, chunks[3]);
+
+                // Control buttons with state
+                let play_btn = if app.is_playing && !app.audio.is_paused() {
+                    "▮▮"
+                } else {
+                    "▶"
+                };
+                
+                let shuffle_text = "Shuffle";
+                let shuffle_style = if app.playlist.is_shuffle() {
+                    Style::default().fg(Color::Rgb(255, 165, 0)) // Orange
+                } else {
+                    Style::default().fg(Color::Gray)
+                };
+                
+                let repeat_text = match app.playlist.repeat_mode() {
+                    RepeatMode::Off => "Repeat",
+                    RepeatMode::One => "Repeat 1",
+                    RepeatMode::All => "Repeat All",
+                };
+                let repeat_style = match app.playlist.repeat_mode() {
+                    RepeatMode::Off => Style::default().fg(Color::Gray),
+                    _ => Style::default().fg(Color::Rgb(255, 165, 0)), // Orange
+                };
+
+                let vol_display = if app.is_muted {
+                    "Vol: MUTED"
+                } else {
+                    &format!("Vol: {}%", (app.volume * 100.0) as u32)
+                };
+
+                // Build player display with styled components
+                let player_lines = vec![
+                    Line::from(vec![Span::styled(format!("♪ {} | {}", current_track, time_label), Style::default())]),
+                    Line::from(progress_bar.clone()),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::raw(play_btn),
+                        Span::raw("  "),
+                        Span::styled(shuffle_text, shuffle_style),
+                        Span::raw("  "),
+                        Span::styled(repeat_text, repeat_style),
+                        Span::raw(format!("  {}", vol_display)),
+                    ]),
+                ];
+                
+                let player = Paragraph::new(player_lines)
+                    .alignment(Alignment::Center)
+                    .block(Block::default().borders(Borders::ALL).title("Player"));
+                f.render_widget(player, main_layout[1]);
                 
                 // Render modals on top
                 match app.modal {
@@ -448,9 +582,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     KeyCode::F(2) => {
                         app.modal = Modal::Settings;
                     }
+                    KeyCode::Char('h') | KeyCode::Char('H') => {
+                        // Toggle between Playlist and History
+                        app.focus = match app.focus {
+                            FocusPane::History => FocusPane::Playlist,
+                            _ => FocusPane::History,
+                        };
+                    }
                     KeyCode::Tab => {
-                        app.show_browser = !app.show_browser;
+                        // Tab toggles browser and switches focus
                         if app.show_browser {
+                            // Browser is open, close it and go to playlist
+                            app.show_browser = false;
+                            app.focus = FocusPane::Playlist;
+                        } else {
+                            // Browser is closed, open it and focus it
+                            app.show_browser = true;
+                            app.focus = FocusPane::Browser;
                             app.config.last_directory = Some(app.browser.current_dir().to_string_lossy().to_string());
                         }
                     }
@@ -463,96 +611,163 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             app.is_playing = false;
                         }
                     }
-                    KeyCode::Char(',') | KeyCode::Char('<') => {
+                    KeyCode::Left => {
                         app.playlist.previous();
                         app.play_current();
                     }
-                    KeyCode::Char('.') | KeyCode::Char('>') => {
+                    KeyCode::Right => {
                         app.playlist.next();
                         app.play_current();
                     }
+                    KeyCode::Char(',') => {
+                        app.audio.seek_backward(5);
+                    }
+                    KeyCode::Char('.') => {
+                        app.audio.seek_forward(5);
+                    }
                     KeyCode::Char('+') | KeyCode::Char('=') => {
-                        app.volume = (app.volume + 0.1).min(2.0);
-                        app.audio.set_volume(app.volume);
+                        if !app.is_muted {
+                            app.volume = (app.volume + 0.1).min(2.0);
+                            app.audio.set_volume(app.volume);
+                        }
                     }
                     KeyCode::Char('-') => {
-                        app.volume = (app.volume - 0.1).max(0.0);
-                        app.audio.set_volume(app.volume);
+                        if !app.is_muted {
+                            app.volume = (app.volume - 0.1).max(0.0);
+                            app.audio.set_volume(app.volume);
+                        }
+                    }
+                    KeyCode::Char('m') | KeyCode::Char('M') => {
+                        if app.is_muted {
+                            app.is_muted = false;
+                            app.volume = app.volume_before_mute;
+                            app.audio.set_volume(app.volume);
+                        } else {
+                            app.is_muted = true;
+                            app.volume_before_mute = app.volume;
+                            app.audio.set_volume(0.0);
+                        }
+                    }
+                    KeyCode::Char('s') | KeyCode::Char('S') => {
+                        app.playlist.toggle_shuffle();
+                    }
+                    KeyCode::Char('r') | KeyCode::Char('R') => {
+                        app.playlist.cycle_repeat();
                     }
                     _ => {
-                        // Context-specific keys
-                        if app.show_browser {
-                            match key.code {
-                                KeyCode::Up => app.browser.select_prev(),
-                                KeyCode::Down => app.browser.select_next(),
-                                KeyCode::Backspace => {
-                                    app.browser.go_up();
-                                    app.config.last_directory = Some(app.browser.current_dir().to_string_lossy().to_string());
-                                }
-                                KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                                    app.config.default_music_dir = Some(app.browser.current_dir().to_string_lossy().to_string());
-                                    app.config.save();
-                                    app.status = "Default music directory set".to_string();
-                                }
-                                KeyCode::Enter => {
-                                    if let Some(entry) = app.browser.enter_selected() {
-                                        if entry.is_playlist {
-                                            if let Err(e) = app.playlist.load_m3u(&entry.path.to_string_lossy()) {
-                                                app.status = format!("Error loading playlist: {}", e);
-                                            } else {
-                                                app.status = format!("Loaded playlist: {}", entry.name);
-                                                app.config.last_playlist = Some(entry.path.to_string_lossy().to_string());
-                                                app.config.save();
-                                            }
-                                        } else if entry.is_audio {
-                                            app.playlist.add_track(entry.path.to_string_lossy().to_string());
-                                            app.status = format!("Added: {}", entry.name);
-                                        }
-                                    } else {
+                        // Context-specific keys based on focus
+                        match app.focus {
+                            FocusPane::Browser if app.show_browser => {
+                                match key.code {
+                                    KeyCode::Up => app.browser.select_prev(),
+                                    KeyCode::Down => app.browser.select_next(),
+                                    KeyCode::Backspace => {
+                                        app.browser.go_up();
                                         app.config.last_directory = Some(app.browser.current_dir().to_string_lossy().to_string());
                                     }
-                                }
-                                KeyCode::Char('a') | KeyCode::Char('A') => {
-                                    let scan_dir = app.browser.current_dir().to_path_buf();
-                                    let (sender, receiver) = channel();
-                                    scan_receiver = Some(receiver);
-                                    scan_count = 0;
-                                    
-                                    app.status = "⟳ Starting scan...".to_string();
-                                    
-                                    thread::spawn(move || {
-                                        FileBrowser::scan_audio_files_streaming(scan_dir, sender);
-                                    });
-                                }
-                                _ => { needs_redraw = false; }
-                            }
-                        } else {
-                            match key.code {
-                                KeyCode::Up => app.playlist.select_prev(),
-                                KeyCode::Down => app.playlist.select_next(),
-                                KeyCode::Enter => {
-                                    app.playlist.play_selected();
-                                    app.play_current();
-                                }
-                                KeyCode::Delete => {
-                                    if app.playlist.remove_selected() {
-                                        app.status = "Track removed".to_string();
+                                    KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                                        app.config.default_music_dir = Some(app.browser.current_dir().to_string_lossy().to_string());
+                                        app.config.save();
+                                        app.status = "Default music directory set".to_string();
                                     }
+                                    KeyCode::Enter => {
+                                        if let Some(entry) = app.browser.enter_selected() {
+                                            if entry.is_playlist {
+                                                if let Err(e) = app.playlist.load_m3u(&entry.path.to_string_lossy()) {
+                                                    app.status = format!("Error loading playlist: {}", e);
+                                                } else {
+                                                    app.status = format!("Loaded playlist: {}", entry.name);
+                                                    app.config.last_playlist = Some(entry.path.to_string_lossy().to_string());
+                                                    app.config.save();
+                                                }
+                                            } else if entry.is_audio {
+                                                app.playlist.add_track(entry.path.to_string_lossy().to_string());
+                                                app.status = format!("Added: {}", entry.name);
+                                            }
+                                        } else {
+                                            app.config.last_directory = Some(app.browser.current_dir().to_string_lossy().to_string());
+                                        }
+                                    }
+                                    KeyCode::Char('a') | KeyCode::Char('A') => {
+                                        let scan_dir = app.browser.current_dir().to_path_buf();
+                                        let (sender, receiver) = channel();
+                                        scan_receiver = Some(receiver);
+                                        scan_count = 0;
+                                        
+                                        app.status = "⟳ Starting scan...".to_string();
+                                        
+                                        thread::spawn(move || {
+                                            FileBrowser::scan_audio_files_streaming(scan_dir, sender);
+                                        });
+                                    }
+                                    _ => { needs_redraw = false; }
                                 }
-                                KeyCode::Char('c') | KeyCode::Char('C') => {
-                                    app.playlist.clear();
-                                    app.audio.stop();
-                                    app.is_playing = false;
-                                    app.status = "Playlist cleared".to_string();
-                                }
-                                KeyCode::Char('s') | KeyCode::Char('S') => {
-                                    app.playlist.toggle_shuffle();
-                                }
-                                KeyCode::Char('r') | KeyCode::Char('R') => {
-                                    app.playlist.cycle_repeat();
-                                }
-                                _ => { needs_redraw = false; }
                             }
+                            FocusPane::History => {
+                                match key.code {
+                                    KeyCode::Up => {
+                                        let len = app.history.len();
+                                        if len > 0 {
+                                            let current = app.history_state.selected().unwrap_or(0);
+                                            let next = if current == 0 { len - 1 } else { current - 1 };
+                                            app.history_state.select(Some(next));
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        let len = app.history.len();
+                                        if len > 0 {
+                                            let current = app.history_state.selected().unwrap_or(0);
+                                            let next = (current + 1) % len;
+                                            app.history_state.select(Some(next));
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        // Play song from history
+                                        if let Some(selected) = app.history_state.selected() {
+                                            if let Some(track) = app.history.get(selected) {
+                                                let track_path = track.clone();
+                                                
+                                                // Check if track is in playlist
+                                                if let Some(pos) = app.playlist.tracks().iter().position(|t| t == &track_path) {
+                                                    // Track exists, jump to it
+                                                    app.playlist.select_index(pos);
+                                                    app.playlist.play_selected();
+                                                } else {
+                                                    // Track not in playlist, add it and play
+                                                    app.playlist.add_track(track_path.clone());
+                                                    app.playlist.select_index(app.playlist.tracks().len() - 1);
+                                                    app.playlist.play_selected();
+                                                }
+                                                app.play_current();
+                                            }
+                                        }
+                                    }
+                                    _ => { needs_redraw = false; }
+                                }
+                            }
+                            FocusPane::Playlist => {
+                                match key.code {
+                                    KeyCode::Up => app.playlist.select_prev(),
+                                    KeyCode::Down => app.playlist.select_next(),
+                                    KeyCode::Enter => {
+                                        app.playlist.play_selected();
+                                        app.play_current();
+                                    }
+                                    KeyCode::Delete => {
+                                        if app.playlist.remove_selected() {
+                                            app.status = "Track removed".to_string();
+                                        }
+                                    }
+                                    KeyCode::Char('c') | KeyCode::Char('C') => {
+                                        app.playlist.clear();
+                                        app.audio.stop();
+                                        app.is_playing = false;
+                                        app.status = "Playlist cleared".to_string();
+                                    }
+                                    _ => { needs_redraw = false; }
+                                }
+                            }
+                            _ => { needs_redraw = false; }
                         }
                     }
                 }

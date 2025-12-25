@@ -1,4 +1,4 @@
-use rodio::{Decoder, OutputStream, Sink};
+use rodio::{Decoder, OutputStream, Sink, Source};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::{Arc, Mutex};
@@ -14,6 +14,8 @@ pub struct AudioEngine {
     start_time: Arc<Mutex<Option<Instant>>>,
     duration: Arc<Mutex<Option<Duration>>>,
     paused_elapsed: Arc<Mutex<Duration>>,
+    current_file: Arc<Mutex<Option<String>>>,
+    seek_offset: Arc<Mutex<Duration>>,
 }
 
 impl AudioEngine {
@@ -29,11 +31,16 @@ impl AudioEngine {
             start_time: Arc::new(Mutex::new(None)),
             duration: Arc::new(Mutex::new(None)),
             paused_elapsed: Arc::new(Mutex::new(Duration::ZERO)),
+            current_file: Arc::new(Mutex::new(None)),
+            seek_offset: Arc::new(Mutex::new(Duration::ZERO)),
         })
     }
 
     pub fn play(&self, path: &str) -> Result<(), String> {
         let duration = Self::get_file_duration(path);
+        
+        *self.current_file.lock().unwrap() = Some(path.to_string());
+        *self.seek_offset.lock().unwrap() = Duration::ZERO;
         
         let file = File::open(path)
             .map_err(|e| format!("Failed to open file: {}", e))?;
@@ -49,6 +56,53 @@ impl AudioEngine {
         *self.duration.lock().unwrap() = duration;
         *self.paused_elapsed.lock().unwrap() = Duration::ZERO;
         Ok(())
+    }
+
+    pub fn seek_forward(&self, seconds: u64) {
+        let seek_amount = Duration::from_secs(seconds);
+        let mut offset = self.seek_offset.lock().unwrap();
+        let duration = self.duration.lock().unwrap();
+        
+        if let Some(dur) = *duration {
+            *offset = (*offset + seek_amount).min(dur);
+            drop(offset);
+            drop(duration);
+            self.restart_at_offset();
+        }
+    }
+
+    pub fn seek_backward(&self, seconds: u64) {
+        let seek_amount = Duration::from_secs(seconds);
+        let mut offset = self.seek_offset.lock().unwrap();
+        *offset = offset.saturating_sub(seek_amount);
+        drop(offset);
+        self.restart_at_offset();
+    }
+
+    fn restart_at_offset(&self) {
+        let current_file = self.current_file.lock().unwrap().clone();
+        let offset = *self.seek_offset.lock().unwrap();
+        
+        if let Some(path) = current_file {
+            // Stop current playback
+            self.sink.lock().unwrap().stop();
+            
+            // Restart from offset
+            if let Ok(file) = File::open(&path) {
+                if let Ok(decoder) = Decoder::new(BufReader::new(file)) {
+                    // Skip to offset using Source trait
+                    let source = decoder.skip_duration(offset);
+                    
+                    let sink = self.sink.lock().unwrap();
+                    sink.append(source);
+                    sink.play();
+                    drop(sink);
+                    
+                    *self.start_time.lock().unwrap() = Some(Instant::now());
+                    *self.paused_elapsed.lock().unwrap() = offset;
+                }
+            }
+        }
     }
 
     fn get_file_duration(path: &str) -> Option<Duration> {
