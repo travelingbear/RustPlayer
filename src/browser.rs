@@ -79,7 +79,7 @@ impl FileBrowser {
                 
                 // Check file extension
                 let extension = path.extension()?.to_str()?.to_lowercase();
-                let is_audio = matches!(extension.as_str(), "mp3" | "flac" | "wav" | "ogg" | "m4a" | "aac");
+                let is_audio = matches!(extension.as_str(), "mp3" | "flac" | "wav" | "ogg");
                 let is_playlist = extension == "m3u";
 
                 if is_audio || is_playlist {
@@ -172,7 +172,7 @@ impl FileBrowser {
             if path.is_dir() {
                 count = Self::collect_audio_files_streaming(&path, depth + 1, sender, count);
             } else if let Some(ext) = path.extension() {
-                if matches!(ext.to_str(), Some("mp3" | "flac" | "wav" | "ogg" | "m4a" | "aac")) {
+                if matches!(ext.to_str(), Some("mp3" | "flac" | "wav" | "ogg")) {
                     if sender.send(path).is_err() {
                         return count; // Channel closed, stop scanning
                     }

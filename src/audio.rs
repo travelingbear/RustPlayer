@@ -84,9 +84,6 @@ impl AudioEngine {
         let offset = *self.seek_offset.lock().unwrap();
         
         if let Some(path) = current_file {
-            // Check if file is M4A/AAC (symphonia decoder has seeking issues)
-            let is_m4a = path.to_lowercase().ends_with(".m4a") || path.to_lowercase().ends_with(".aac");
-            
             // Stop current playback
             self.sink.lock().unwrap().stop();
             
@@ -95,15 +92,11 @@ impl AudioEngine {
                 if let Ok(decoder) = Decoder::new(BufReader::new(file)) {
                     let sink = self.sink.lock().unwrap();
                     
-                    // For M4A files, don't seek at all - just play from start
-                    if is_m4a {
-                        sink.append(decoder);
-                        *self.paused_elapsed.lock().unwrap() = Duration::ZERO;
-                    } else if offset == Duration::ZERO {
+                    if offset == Duration::ZERO {
                         sink.append(decoder);
                         *self.paused_elapsed.lock().unwrap() = Duration::ZERO;
                     } else {
-                        // Skip to offset using Source trait (only for non-M4A)
+                        // Skip to offset using Source trait
                         let source = decoder.skip_duration(offset);
                         sink.append(source);
                         *self.paused_elapsed.lock().unwrap() = offset;
