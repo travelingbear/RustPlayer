@@ -1,6 +1,8 @@
-# RAP - Rust Audio Player
+# TAP - Terminal Audio Player
 
 A lightweight, terminal-based music player written in Rust with minimal resource usage.
+
+Part of the **TipTap** suite (TAP + TYP - Terminal YouTube Player).
 
 ## Features
 
@@ -20,7 +22,7 @@ Requires Rust 1.70 or later.
 
 ```bash
 git clone <your-repo-url>
-cd RAP
+cd TAP
 cargo build --release
 ./target/release/rustplayer
 ```
@@ -58,7 +60,7 @@ Download the latest release for your platform from the [Releases](../../releases
 
 ## Performance
 
-RAP is designed to be extremely resource-efficient:
+TAP is designed to be extremely resource-efficient:
 - **Memory**: ~11.6 MB
 - **CPU**: ~4% during playback
 - No memory leaks during extended playback sessions
