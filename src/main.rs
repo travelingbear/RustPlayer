@@ -62,6 +62,7 @@ struct App {
     current_track_path: Option<String>,
     help_scroll: u16,
     save_path_input: String,
+    save_path_cursor: usize,
 }
 
 impl App {
@@ -90,6 +91,7 @@ impl App {
             current_track_path: None,
             help_scroll: 0,
             save_path_input: String::new(),
+            save_path_cursor: 0,
         })
     }
 
@@ -634,7 +636,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let area = centered_rect(70, 30, f.size());
                         f.render_widget(Clear, area);
                         
-                        // Add blinking cursor
+                        // Add blinking cursor at cursor position
                         let cursor = if (std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
@@ -644,12 +646,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             " "
                         };
                         
+                        // Insert cursor at the current position
+                        let mut display_path = app.save_path_input.clone();
+                        if app.save_path_cursor <= display_path.len() {
+                            display_path.insert_str(app.save_path_cursor, cursor);
+                        } else {
+                            display_path.push_str(cursor);
+                        }
+                        
                         let save_text = format!(
                             "Save Playlist\n\n\
-                            Path:\n{}{}\n\n\
+                            Path:\n{}\n\n\
                             Press Enter to save, ESC to cancel\n\
-                            Use Backspace to edit path",
-                            app.save_path_input, cursor
+                            Use ← → to move cursor, Backspace/Delete to edit",
+                            display_path
                         );
                         
                         let save_dialog = Paragraph::new(save_text)
@@ -676,6 +686,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Esc => {
                                 app.modal = Modal::None;
                                 app.save_path_input.clear();
+                                app.save_path_cursor = 0;
                             }
                             KeyCode::Enter => {
                                 let path = app.save_path_input.clone();
@@ -685,12 +696,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 app.modal = Modal::None;
                                 app.save_path_input.clear();
+                                app.save_path_cursor = 0;
+                            }
+                            KeyCode::Left => {
+                                app.save_path_cursor = app.save_path_cursor.saturating_sub(1);
+                            }
+                            KeyCode::Right => {
+                                if app.save_path_cursor < app.save_path_input.len() {
+                                    app.save_path_cursor += 1;
+                                }
+                            }
+                            KeyCode::Home => {
+                                app.save_path_cursor = 0;
+                            }
+                            KeyCode::End => {
+                                app.save_path_cursor = app.save_path_input.len();
                             }
                             KeyCode::Backspace => {
-                                app.save_path_input.pop();
+                                if app.save_path_cursor > 0 {
+                                    app.save_path_cursor -= 1;
+                                    app.save_path_input.remove(app.save_path_cursor);
+                                }
+                            }
+                            KeyCode::Delete => {
+                                if app.save_path_cursor < app.save_path_input.len() {
+                                    app.save_path_input.remove(app.save_path_cursor);
+                                }
                             }
                             KeyCode::Char(c) => {
-                                app.save_path_input.push(c);
+                                app.save_path_input.insert(app.save_path_cursor, c);
+                                app.save_path_cursor += 1;
                             }
                             _ => {}
                         }
@@ -823,6 +858,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     KeyCode::Char('s') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                         // Open save playlist modal
                         app.save_path_input = app.get_default_playlist_path();
+                        app.save_path_cursor = app.save_path_input.len();
                         app.modal = Modal::SavePlaylist;
                     }
                     KeyCode::Char('s') | KeyCode::Char('S') => {
