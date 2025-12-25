@@ -30,6 +30,7 @@ enum Modal {
     None,
     Help,
     Settings,
+    SavePlaylist,
 }
 
 enum FocusPane {
@@ -60,6 +61,7 @@ struct App {
     current_track_start: Option<std::time::Instant>,
     current_track_path: Option<String>,
     help_scroll: u16,
+    save_path_input: String,
 }
 
 impl App {
@@ -87,6 +89,7 @@ impl App {
             current_track_start: None,
             current_track_path: None,
             help_scroll: 0,
+            save_path_input: String::new(),
         })
     }
 
@@ -627,6 +630,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .wrap(Wrap { trim: false });
                         f.render_widget(settings, area);
                     }
+                    Modal::SavePlaylist => {
+                        let area = centered_rect(70, 30, f.size());
+                        f.render_widget(Clear, area);
+                        
+                        let save_text = format!(
+                            "Save Playlist\n\n\
+                            Path:\n{}\n\n\
+                            Press Enter to save, ESC to cancel\n\
+                            Use Backspace to edit path",
+                            app.save_path_input
+                        );
+                        
+                        let save_dialog = Paragraph::new(save_text)
+                            .block(Block::default().borders(Borders::ALL).title("Save Playlist as M3U"))
+                            .style(Style::default().bg(Color::Black))
+                            .wrap(Wrap { trim: false });
+                        f.render_widget(save_dialog, area);
+                    }
                     Modal::None => {}
                 }
             })?;
@@ -639,6 +660,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 
                 // Modal handling
                 match app.modal {
+                    Modal::SavePlaylist => {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.modal = Modal::None;
+                                app.save_path_input.clear();
+                            }
+                            KeyCode::Enter => {
+                                let path = app.save_path_input.clone();
+                                match app.save_playlist_m3u(&path) {
+                                    Ok(_) => app.status = format!("Playlist saved: {}", path),
+                                    Err(e) => app.status = format!("Error: {}", e),
+                                }
+                                app.modal = Modal::None;
+                                app.save_path_input.clear();
+                            }
+                            KeyCode::Backspace => {
+                                app.save_path_input.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                app.save_path_input.push(c);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     Modal::Help | Modal::Settings => {
                         match key.code {
                             KeyCode::Esc | KeyCode::F(1) if matches!(app.modal, Modal::Help) => {
@@ -764,12 +810,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     KeyCode::Char('s') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                        // Save playlist to default location (Ctrl+S)
-                        let path = app.get_default_playlist_path();
-                        match app.save_playlist_m3u(&path) {
-                            Ok(_) => app.status = format!("Playlist saved: {}", path),
-                            Err(e) => app.status = format!("Error: {}", e),
-                        }
+                        // Open save playlist modal
+                        app.save_path_input = app.get_default_playlist_path();
+                        app.modal = Modal::SavePlaylist;
                     }
                     KeyCode::Char('s') | KeyCode::Char('S') => {
                         app.playlist.toggle_shuffle();
