@@ -505,9 +505,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Control buttons with state
                 let play_btn = if app.is_playing && !app.audio.is_paused() {
-                    "▶▶"  // Show playing status (doubled)
+                    "▶"  // Show playing status
                 } else {
-                    "⏸⏸"  // Show paused status (doubled)
+                    "⏸"  // Show paused status
                 };
                 
                 let shuffle_text = "Shuffle";
