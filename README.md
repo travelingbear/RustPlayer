@@ -49,7 +49,7 @@ Download the latest release for your platform from the [Releases](../../releases
 - `C` - Clear playlist
 
 **Navigation:**
-- `Tab` - Cycle between panes (Playlist/Browser/History)
+- `Tab` - Cycle between panes (Playlist/Browser)
 - `↑` `↓` - Navigate lists
 - `Enter` - Play selected track (in Playlist/History) or add directory (in Browser)
 - `H` - Toggle history view
@@ -59,8 +59,8 @@ Download the latest release for your platform from the [Releases](../../releases
 ## Performance
 
 RustPlayer is designed to be extremely resource-efficient:
-- **Memory**: ~11.6 MB RSS (vs 144 MB for VLC)
-- **CPU**: ~4% during playback (vs 8.6% for VLC)
+- **Memory**: ~11.6 MB
+- **CPU**: ~4% during playback
 - No memory leaks during extended playback sessions
 
 ## Technical Details
