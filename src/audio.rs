@@ -60,12 +60,12 @@ impl AudioEngine {
 
     pub fn seek_forward(&self, seconds: u64) {
         let seek_amount = Duration::from_secs(seconds);
-        let mut offset = self.seek_offset.lock().unwrap();
+        let current_pos = self.get_position();
         let duration = self.duration.lock().unwrap();
         
         if let Some(dur) = *duration {
-            *offset = (*offset + seek_amount).min(dur);
-            drop(offset);
+            let new_offset = (current_pos + seek_amount).min(dur);
+            *self.seek_offset.lock().unwrap() = new_offset;
             drop(duration);
             self.restart_at_offset();
         }
@@ -73,9 +73,9 @@ impl AudioEngine {
 
     pub fn seek_backward(&self, seconds: u64) {
         let seek_amount = Duration::from_secs(seconds);
-        let mut offset = self.seek_offset.lock().unwrap();
-        *offset = offset.saturating_sub(seek_amount);
-        drop(offset);
+        let current_pos = self.get_position();
+        let new_offset = current_pos.saturating_sub(seek_amount);
+        *self.seek_offset.lock().unwrap() = new_offset;
         self.restart_at_offset();
     }
 

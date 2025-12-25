@@ -54,6 +54,9 @@ struct App {
     history: Vec<String>,
     is_muted: bool,
     volume_before_mute: f32,
+    last_prev_press: Option<std::time::Instant>,
+    current_track_start: Option<std::time::Instant>,
+    current_track_path: Option<String>,
 }
 
 impl App {
@@ -76,21 +79,37 @@ impl App {
             history: Vec::new(),
             is_muted: false,
             volume_before_mute: 1.0,
+            last_prev_press: None,
+            current_track_start: None,
+            current_track_path: None,
         })
     }
 
+    fn add_to_history_if_played_enough(&mut self) {
+        if let (Some(start), Some(ref path)) = (self.current_track_start, &self.current_track_path) {
+            let elapsed = start.elapsed().as_secs();
+            if elapsed >= 15 && (self.history.is_empty() || self.history[0] != *path) {
+                self.history.insert(0, path.clone());
+                if self.history.len() > 50 {
+                    self.history.truncate(50);
+                }
+            }
+        }
+    }
+
     fn play_current(&mut self) {
+        // Add previous track to history if it was played long enough
+        self.add_to_history_if_played_enough();
+        
         if let Some(track) = self.playlist.current() {
             self.audio.stop();
             match self.audio.play(track) {
                 Ok(_) => {
                     self.status = format!("Playing: {}", Self::get_filename(track));
                     self.is_playing = true;
-                    // Add to history
-                    self.history.insert(0, track.to_string());
-                    if self.history.len() > 50 {
-                        self.history.truncate(50);
-                    }
+                    // Track when this song started
+                    self.current_track_start = Some(std::time::Instant::now());
+                    self.current_track_path = Some(track.to_string());
                 }
                 Err(e) => self.status = format!("Error: {}", e),
             }
@@ -381,8 +400,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Keybinds box
                 let keybinds_text = 
                     "Space   Play/Pause\n\
-                     ← →     Prev/Next\n\
-                     , .     Seek ±5s\n\
+                     , .     Prev/Next\n\
+                     ← →     Seek ±5s\n\
                      + -     Volume\n\
                      M       Mute\n\
                      S       Shuffle\n\
@@ -612,18 +631,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     KeyCode::Left => {
-                        app.playlist.previous();
-                        app.play_current();
-                    }
-                    KeyCode::Right => {
-                        app.playlist.next();
-                        app.play_current();
-                    }
-                    KeyCode::Char(',') => {
                         app.audio.seek_backward(5);
                     }
-                    KeyCode::Char('.') => {
+                    KeyCode::Right => {
                         app.audio.seek_forward(5);
+                    }
+                    KeyCode::Char(',') => {
+                        // If pressed within 2 seconds of last press, go to previous track
+                        // Otherwise, restart current track
+                        let now = std::time::Instant::now();
+                        let should_go_prev = if let Some(last) = app.last_prev_press {
+                            now.duration_since(last) < std::time::Duration::from_secs(2)
+                        } else {
+                            false
+                        };
+                        
+                        if should_go_prev || app.audio.get_position().as_secs() < 3 {
+                            // Go to previous track
+                            app.playlist.previous();
+                            app.play_current();
+                            app.last_prev_press = None;
+                        } else {
+                            // Restart current track
+                            app.play_current();
+                            app.last_prev_press = Some(now);
+                        }
+                    }
+                    KeyCode::Char('.') => {
+                        app.playlist.next();
+                        app.play_current();
                     }
                     KeyCode::Char('+') | KeyCode::Char('=') => {
                         if !app.is_muted {
