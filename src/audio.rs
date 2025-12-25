@@ -87,27 +87,32 @@ impl AudioEngine {
             // Check if file is M4A/AAC (symphonia decoder has seeking issues)
             let is_m4a = path.to_lowercase().ends_with(".m4a") || path.to_lowercase().ends_with(".aac");
             
-            // Skip seeking for M4A files to avoid panic
-            if is_m4a && offset > Duration::ZERO {
-                return;
-            }
-            
             // Stop current playback
             self.sink.lock().unwrap().stop();
             
             // Restart from offset
             if let Ok(file) = File::open(&path) {
                 if let Ok(decoder) = Decoder::new(BufReader::new(file)) {
-                    // Skip to offset using Source trait
-                    let source = decoder.skip_duration(offset);
-                    
                     let sink = self.sink.lock().unwrap();
-                    sink.append(source);
+                    
+                    // For M4A files, don't seek at all - just play from start
+                    if is_m4a {
+                        sink.append(decoder);
+                        *self.paused_elapsed.lock().unwrap() = Duration::ZERO;
+                    } else if offset == Duration::ZERO {
+                        sink.append(decoder);
+                        *self.paused_elapsed.lock().unwrap() = Duration::ZERO;
+                    } else {
+                        // Skip to offset using Source trait (only for non-M4A)
+                        let source = decoder.skip_duration(offset);
+                        sink.append(source);
+                        *self.paused_elapsed.lock().unwrap() = offset;
+                    }
+                    
                     sink.play();
                     drop(sink);
                     
                     *self.start_time.lock().unwrap() = Some(Instant::now());
-                    *self.paused_elapsed.lock().unwrap() = offset;
                 }
             }
         }
