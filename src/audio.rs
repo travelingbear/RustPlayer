@@ -84,6 +84,14 @@ impl AudioEngine {
         let offset = *self.seek_offset.lock().unwrap();
         
         if let Some(path) = current_file {
+            // Check if file is M4A/AAC (symphonia decoder has seeking issues)
+            let is_m4a = path.to_lowercase().ends_with(".m4a") || path.to_lowercase().ends_with(".aac");
+            
+            // Skip seeking for M4A files to avoid panic
+            if is_m4a && offset > Duration::ZERO {
+                return;
+            }
+            
             // Stop current playback
             self.sink.lock().unwrap().stop();
             
