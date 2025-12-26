@@ -236,8 +236,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         // Check if track finished and auto-play next
         if app.is_playing && app.audio.is_finished() && app.playlist.tracks().len() > 0 {
+            let old_index = app.playlist.current_index();
             app.playlist.next();
-            app.play_current();
+            let new_index = app.playlist.current_index();
+            
+            // Only play if we actually moved to a different track
+            if new_index != old_index || app.playlist.repeat_mode() != RepeatMode::Off {
+                app.play_current();
+            } else {
+                // Reached end with repeat off - stop playing
+                app.is_playing = false;
+            }
             needs_redraw = true;
         }
 
@@ -867,6 +876,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     KeyCode::Char('r') | KeyCode::Char('R') => {
                         app.playlist.cycle_repeat();
                     }
+                    KeyCode::Char('c') | KeyCode::Char('C') => {
+                        // Clear playlist (works globally, even with modals open)
+                        app.playlist.clear();
+                        app.audio.stop();
+                        app.is_playing = false;
+                        app.status = "Playlist cleared".to_string();
+                    }
                     _ => {
                         // Context-specific keys based on focus
                         match app.focus {
@@ -962,6 +978,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 match key.code {
                                     KeyCode::Up => app.playlist.select_prev(),
                                     KeyCode::Down => app.playlist.select_next(),
+                                    KeyCode::Backspace => {
+                                        // Switch to browser when pressing backspace in playlist
+                                        app.show_browser = true;
+                                        app.focus = FocusPane::Browser;
+                                    }
                                     KeyCode::Enter => {
                                         app.playlist.play_selected();
                                         app.play_current();
@@ -970,12 +991,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         if app.playlist.remove_selected() {
                                             app.status = "Track removed".to_string();
                                         }
-                                    }
-                                    KeyCode::Char('c') | KeyCode::Char('C') => {
-                                        app.playlist.clear();
-                                        app.audio.stop();
-                                        app.is_playing = false;
-                                        app.status = "Playlist cleared".to_string();
                                     }
                                     _ => { needs_redraw = false; }
                                 }
