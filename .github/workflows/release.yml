@@ -18,16 +18,16 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: rustplayer
-            asset_name: rustplayer-linux-x86_64
+            artifact_name: tap
+            asset_name: tap-linux-x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact_name: rustplayer
-            asset_name: rustplayer-macos-x86_64
+            artifact_name: tap
+            asset_name: tap-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: rustplayer
-            asset_name: rustplayer-macos-aarch64
+            artifact_name: tap
+            asset_name: tap-macos-aarch64
 
     steps:
       - uses: actions/checkout@v4
